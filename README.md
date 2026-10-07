@@ -1,11 +1,11 @@
-# DevSecOps AWS Pipeline
+# DevSecOps Azure Pipeline
 
-A small CI/CD security pipeline for the IUP CS midterm (data center deployment exploration, AWS free tier).
+A small CI/CD security pipeline for the IUP CS midterm (data center deployment exploration, Azure free account).
 
-GitHub Actions scans and builds the app, pushes the image to ECR, Amazon Inspector scans it for CVEs, and the
-pipeline deploys to a Staging EC2 instance, then waits for manual approval before deploying to Production.
-A Telegram bot running on the Production instance polls GitHub for pipeline status and can approve/rollback
-deployments from a phone.
+GitHub Actions scans and builds the app, pushes the image to Azure Container Registry (ACR), Microsoft Defender
+for Containers scans it for CVEs, and the pipeline deploys to a Staging VM, then waits for manual approval
+before deploying to Production. A Telegram bot running on the Production VM polls GitHub for pipeline status
+and can approve/rollback deployments from a phone.
 
 ## Repo setup (GitHub side)
 
@@ -13,24 +13,31 @@ Settings → Secrets and variables → Actions → **Variables** (not secrets �
 
 | Variable | Example | Notes |
 |---|---|---|
-| `AWS_REGION` | `us-east-1` | region everything is deployed in |
-| `ECR_REPOSITORY` | `devsecops-aws-pipeline` | ECR repo name |
-| `AWS_ROLE_ARN` | `arn:aws:iam::<account-id>:role/github-actions-deploy` | the OIDC-trusted role |
-| `STAGING_INSTANCE_ID` | `i-0abc...` | Staging EC2 instance |
-| `PRODUCTION_INSTANCE_ID` | `i-0def...` | Production EC2 instance |
+| `AZURE_CLIENT_ID` | `00000000-...` | App registration (client) ID |
+| `AZURE_TENANT_ID` | `00000000-...` | Entra ID tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | `00000000-...` | Azure subscription ID |
+| `RESOURCE_GROUP` | `devsecops-rg` | resource group everything lives in |
+| `ACR_NAME` | `devsecopsacr` | ACR registry name (no dots/dashes) |
+| `IMAGE_NAME` | `devsecops-app` | image repository name inside ACR |
+| `STAGING_VM_NAME` | `vm-staging` | Staging VM |
+| `PRODUCTION_VM_NAME` | `vm-production` | Production VM |
 
 Settings → Environments → create `staging` and `production`. On `production`, add a **required reviewer** —
 that's the manual approval gate.
 
-## AWS setup checklist
+## Azure setup checklist
 
-- [ ] VPC with 2 subnets (staging / production)
-- [ ] 2x EC2 instances (t2/t3.micro), SSM agent enabled, Docker installed, instance role with `AmazonSSMManagedInstanceCore` + ECR pull permissions
-- [ ] ECR repository with enhanced scanning (Amazon Inspector) turned on
-- [ ] IAM OIDC identity provider for `token.actions.githubusercontent.com`
-- [ ] IAM role trusted by that provider, scoped to this repo, with ECR push + SSM send-command permissions
-- [ ] CloudWatch dashboard + one alarm
-- [ ] Budget alarm (done)
+- [ ] Resource group
+- [ ] VNet with 2 subnets (staging / production)
+- [ ] 2x Azure VMs (B1s, free-tier eligible), Docker installed, **system-assigned managed identity** with `AcrPull` role on the ACR
+- [ ] Azure Container Registry (Basic SKU)
+- [ ] Microsoft Defender for Cloud → Defender for Containers plan enabled on the subscription (scans images pushed to ACR)
+- [ ] Entra ID App Registration for GitHub Actions, with a **federated credential** trusting `token.actions.githubusercontent.com` for this repo, scoped via role assignment (`AcrPush` on the ACR, `Virtual Machine Contributor` or a custom run-command role on the resource group)
+- [ ] Azure Monitor: Log Analytics workspace + a workbook/dashboard + one alert rule
+- [ ] Budget alert (done, $1 threshold)
+
+**Cost note:** VMs are stopped (deallocated) between testing sessions to avoid compute charges — only
+start them when actively demoing or capturing screenshots.
 
 ## Local dev
 
@@ -41,5 +48,5 @@ python app.py
 
 ## Deploy
 
-Push to `main`. The pipeline runs automatically: scan → build → push → Inspector scan (automatic on ECR push) →
-deploy staging → **manual approval** → deploy production.
+Push to `main`. The pipeline runs automatically: scan → build → push to ACR → Defender for Containers scan
+(automatic on push) → deploy staging → **manual approval** → deploy production.

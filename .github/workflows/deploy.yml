@@ -5,12 +5,13 @@ on:
     branches: [main]
 
 permissions:
-  id-token: write   # required for OIDC -> AWS
+  id-token: write   # required for OIDC -> Azure
   contents: read
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+  IMAGE_NAME: ${{ vars.IMAGE_NAME }}
 
 jobs:
   scan:
@@ -33,34 +34,31 @@ jobs:
         run: bandit -r . -x ./tests
 
   build-and-push:
-    name: Build image and push to ECR
+    name: Build image and push to ACR
     needs: scan
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.build.outputs.image }}
-      registry: ${{ steps.ecr-login.outputs.registry }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Login to ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, tag, push image
+      - name: Build and push image (ACR Tasks)
         id: build
         env:
-          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
-          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          echo "image=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "$IMAGE_NAME:$IMAGE_TAG" \
+            .
+          echo "image=$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
   deploy-staging:
     name: Deploy to Staging
@@ -68,25 +66,26 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy via SSM
+      - name: Deploy via Azure Run Command
         run: |
-          aws ssm send-command \
-            --instance-ids "${{ vars.STAGING_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --comment "Deploy ${{ needs.build-and-push.outputs.image }} to staging" \
-            --parameters '{"commands":[
-              "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ needs.build-and-push.outputs.registry }}",
-              "docker pull ${{ needs.build-and-push.outputs.image }}",
-              "docker rm -f app || true",
-              "docker run -d --name app -p 8080:8080 -e ENVIRONMENT=staging -e APP_VERSION=${{ github.sha }} ${{ needs.build-and-push.outputs.image }}"
-            ]}' \
-            --output text
+          az vm run-command invoke \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "${{ vars.STAGING_VM_NAME }}" \
+            --command-id RunShellScript \
+            --scripts "
+              az login --identity &&
+              az acr login --name $ACR_NAME &&
+              docker pull ${{ needs.build-and-push.outputs.image }} &&
+              docker rm -f app || true &&
+              docker run -d --name app -p 8080:8080 -e ENVIRONMENT=staging -e APP_VERSION=${{ github.sha }} ${{ needs.build-and-push.outputs.image }}
+            "
 
   deploy-production:
     name: Deploy to Production
@@ -94,22 +93,23 @@ jobs:
     runs-on: ubuntu-latest
     environment: production   # configure a required reviewer on this Environment in repo settings
     steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy via SSM
+      - name: Deploy via Azure Run Command
         run: |
-          aws ssm send-command \
-            --instance-ids "${{ vars.PRODUCTION_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --comment "Deploy ${{ needs.build-and-push.outputs.image }} to production" \
-            --parameters '{"commands":[
-              "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ needs.build-and-push.outputs.registry }}",
-              "docker pull ${{ needs.build-and-push.outputs.image }}",
-              "docker rm -f app || true",
-              "docker run -d --name app -p 8080:8080 -e ENVIRONMENT=production -e APP_VERSION=${{ github.sha }} ${{ needs.build-and-push.outputs.image }}"
-            ]}' \
-            --output text
+          az vm run-command invoke \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "${{ vars.PRODUCTION_VM_NAME }}" \
+            --command-id RunShellScript \
+            --scripts "
+              az login --identity &&
+              az acr login --name $ACR_NAME &&
+              docker pull ${{ needs.build-and-push.outputs.image }} &&
+              docker rm -f app || true &&
+              docker run -d --name app -p 8080:8080 -e ENVIRONMENT=production -e APP_VERSION=${{ github.sha }} ${{ needs.build-and-push.outputs.image }}
+            "
