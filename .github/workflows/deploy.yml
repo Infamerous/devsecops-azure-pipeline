@@ -49,17 +49,19 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build and push image (ACR Tasks)
+      - name: Build and push image
         id: build
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          az acr build \
-            --registry "$ACR_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --image "$IMAGE_NAME:$IMAGE_TAG" \
-            .
-          echo "image=$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          # ACR Tasks (az acr build) isn't permitted on this Azure for Students
+          # subscription, so build locally on the runner and push with docker
+          # instead of offloading the build to ACR's hosted compute.
+          az acr login --name "$ACR_NAME"
+          IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
   deploy-staging:
     name: Deploy to Staging
