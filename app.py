@@ -24,4 +24,6 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    # Binding to all interfaces is required here: the app runs inside a
+    # Docker container and must be reachable via the host's published port.
+    app.run(host="0.0.0.0", port=8080)  # nosec B104
