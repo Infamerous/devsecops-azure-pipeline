@@ -36,3 +36,27 @@ provider has been revoked" even though `microsoft.insights` showed as Registered
 **Cost discipline:** stop (deallocate) both VMs between work sessions — compute only bills while running.
 
 Fill these into the GitHub repo's Actions variables per [README.md](README.md) once everything is created.
+
+## First real pipeline run: three bugs, three fixes
+
+Pushing a real commit to `main` surfaced three genuine issues that only show up with a live run
+(the architecture was sound, but these details weren't visible until things actually ran):
+
+1. **OIDC subject broke on repo rename.** Renaming the GitHub repo (`devsecops-aws-pipeline` →
+   `devsecops-azure-pipeline`) changed the subject claim GitHub's OIDC token presents
+   (`repo:<org>/<org-id>/<repo-name>@<repo-id>:ref:...`), so all three federated credentials in
+   Entra ID stopped matching and `azure/login` failed with `AADSTS70021`. Fix: edit each federated
+   credential's Repository field to the new name (Azure recomputes the subject identifier; the
+   credential itself doesn't need deleting/recreating).
+2. **`az acr build` needs more than `AcrPush`.** `AcrPush` only grants the ACR *data-plane*
+   pull/push actions — not the ARM *control-plane* `registries/read` needed to resolve the
+   registry, nor `listBuildSourceUploadUrl`/`scheduleRun` needed by ACR Tasks. Adding `Reader` and
+   then `Contributor` (both scoped to just the ACR resource) got past each error in turn.
+3. **ACR Tasks isn't permitted on Azure for Students at all.** Even with full `Contributor`, the
+   build failed with `TasksOperationsNotAllowed` — this subscription tier blocks the managed-build
+   feature outright, independent of RBAC. The real fix was to stop using `az acr build` and instead
+   `docker build` on the GitHub Actions runner itself, then `docker push` after `az acr login`.
+   This is arguably the more standard pattern for a CI runner anyway.
+
+After these three fixes, the pipeline ran clean end-to-end: scan → build/push → deploy staging →
+manual approval → deploy production, total ~4m30s.
