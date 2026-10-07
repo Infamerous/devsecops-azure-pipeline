@@ -27,14 +27,14 @@ that's the manual approval gate.
 
 ## Azure setup checklist
 
-- [ ] Resource group
-- [ ] VNet with 2 subnets (staging / production)
-- [ ] 2x Azure VMs (B1s, free-tier eligible), Docker installed, **system-assigned managed identity** with `AcrPull` role on the ACR
-- [ ] Azure Container Registry (Basic SKU)
-- [ ] Microsoft Defender for Cloud → Defender for Containers plan enabled on the subscription (scans images pushed to ACR)
-- [ ] Entra ID App Registration for GitHub Actions, with a **federated credential** trusting `token.actions.githubusercontent.com` for this repo, scoped via role assignment (`AcrPush` on the ACR, `Virtual Machine Contributor` or a custom run-command role on the resource group)
-- [ ] Azure Monitor: Log Analytics workspace + a workbook/dashboard + one alert rule
-- [ ] Budget alert (done, $1 threshold)
+- [x] Resource group
+- [x] VNet with 2 subnets (staging / production)
+- [x] 2x Azure VMs (`Standard_B2ts_v2`), Docker installed, **system-assigned managed identity** with `AcrPull` role on the ACR
+- [x] Azure Container Registry (Basic SKU)
+- [x] Microsoft Defender for Cloud → Defender for Containers plan enabled on the subscription (scans images pushed to ACR)
+- [x] Entra ID App Registration for GitHub Actions, with a **federated credential** trusting `token.actions.githubusercontent.com` for this repo, scoped via role assignment (`AcrPush` on the ACR, `Virtual Machine Contributor` on the resource group)
+- [x] Azure Monitor: Log Analytics workspace (`devsecops-law`) + built-in VM availability monitoring + one alert rule (`vm-staging-high-cpu`, CPU > 80%)
+- [x] Budget alert (done, $1 threshold)
 
 **Cost note:** VMs are stopped (deallocated) between testing sessions to avoid compute charges — only
 start them when actively demoing or capturing screenshots.
